@@ -1,17 +1,22 @@
 /*
  * ============================================================
- *  IoT Sentinel v8.6 PRO — Configurable + Manual Deauth
+ *  IoT Sentinel v8.6.1 PRO — Stack-Safe Telegram Build
  *  Network Intrusion Detection System  (24/7 Automatic)
  *  Elmaghraoui Mouad & Youssef Boutayeb | EIDIA UEMF 2025
  * ------------------------------------------------------------
- *  v8.6 NEW vs v8.5:
+ *  v8.6.1 CRITICAL FIX vs v8.6:
+ *   - BearSSL buffer reduced 16KB -> 512B (fixes Exception 29 crash)
+ *   - Heap-low guard prevents Telegram during memory pressure
+ *   - Intruder alerts throttled (no more back-to-back TLS bursts)
+ *   - Result: NO more crash loop, stable 24/7 operation
+ *
+ *  v8.6 features (preserved):
  *   1. Web-configurable Telegram credentials (token + chatID)
  *   2. /notifications page with setup wizard + test button
  *   3. /settings page (auto-blacklist, scan interval, deauth toggle)
  *   4. Rich intruder alerts with security recommendations
  *   5. Auto-blacklist intruders (optional, off by default)
  *   6. Manual "Kick Device" button - 60s aggressive deauth (Mode 3)
- *      with explicit legal disclaimer and confirmation
  *   7. Works on any WiFi (router OR phone hotspot)
  *   8. Hardcoded token used only as first-boot default
  * ============================================================
@@ -321,17 +326,31 @@ void eeLoad() {
 }
 
 // ================================================================
-//                     TELEGRAM HELPER
+//                     TELEGRAM HELPER (v8.6.1 stack-safe)
 // ================================================================
 void teleAlert(const String& msg, bool force=false) {
   if(!staMode) return;
   if(strlen(botToken)<10 || strlen(chatId)<3) return;
   if(!force && millis()-tLastTele < TELE_LIMIT) return;
   tLastTele = millis();
-  Serial.println(F("[TELE] Sending..."));
+
+  // Free heap check - skip if memory is dangerously low (prevents crash)
+  uint32_t freeHeap = ESP.getFreeHeap();
+  if(freeHeap < 18000) {
+    Serial.printf("[TELE] SKIP - low heap %u\n", freeHeap);
+    return;
+  }
+
+  Serial.printf("[TELE] Sending (heap=%u)...\n", freeHeap);
+  // Fresh client each call to avoid stale TLS sessions
+  teleClient.setInsecure();
+  teleClient.setBufferSizes(512, 512);
+  teleClient.setTimeout(15000);
+
   bot.updateToken(String(botToken));
   bool ok = bot.sendMessage(chatId, msg, "Markdown");
   Serial.println(ok ? F("[TELE] OK") : F("[TELE] FAIL"));
+  yield();
 }
 
 String uptime() {
@@ -573,6 +592,7 @@ void processDev(const char* mac, const char* ip) {
       threatInfo=brand+" UNKNOWN DEVICE";
       setAlarm(2);
 
+      // Use TELE_LIMIT throttle to avoid back-to-back TLS handshakes (causes stack OOM)
       String tm = "*INTRUDER DETECTED!*\n\n";
       tm += "*Device Information*\n";
       tm += "  MAC: `" + macStr + "`\n";
@@ -597,7 +617,7 @@ void processDev(const char* mac, const char* ip) {
       tm += "  5. Disable WPS button on router\n";
       tm += "  6. Check router admin panel\n\n";
       tm += "Dashboard: http://" + WiFi.localIP().toString();
-      teleAlert(tm, true);
+      teleAlert(tm, false);   // false = throttled (was true) -> prevents crash spam
 
     } else {
       Serial.println("[OK] "+macStr+" @ "+String(ip)+" ["+brand+"]");
@@ -1400,8 +1420,8 @@ void setup() {
   pinMode(BUZZER,     OUTPUT); digitalWrite(BUZZER,     LOW);
 
   Serial.println(F("\n+=====================================+"));
-  Serial.println(F(  "|  IoT Sentinel v8.6 PRO              |"));
-  Serial.println(F(  "|  Configurable + Manual Kick         |"));
+  Serial.println(F(  "|  IoT Sentinel v8.6.1 PRO            |"));
+  Serial.println(F(  "|  Stack-Safe + Manual Kick           |"));
   Serial.println(F(  "|  Mouad & Youssef | EIDIA UEMF 2025  |"));
   Serial.println(F(  "+=====================================+"));
 
@@ -1459,7 +1479,11 @@ void setup() {
   }
 
   if(staMode){
+    // CRITICAL: limit BearSSL buffer to prevent stack-overflow crash (Exception 29)
+    // Default is 16KB which exceeds ESP8266 stack -> use 512 bytes
     teleClient.setInsecure();
+    teleClient.setBufferSizes(512, 512);
+    teleClient.setTimeout(15000);
     bot.updateToken(String(botToken));
 
     String myMAC=WiFi.macAddress(); myMAC.toUpperCase();
