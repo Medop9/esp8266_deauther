@@ -29,7 +29,7 @@ extern "C" {
 }
 
 // --- credentials ------------------------------------------------------------
-#define BOT_TOKEN "8779703712:AAHHR9TS0nPrlh1CkGANejKROGRQ2IHzQeQ1"
+#define BOT_TOKEN "8842467527:AAHsyhwB0rqSTCT7ytLT9xPAhvSCeITOLD0"
 #define CHAT_ID   "5401312485"
 const char* AP_SSID = "IoT-Sentinel";
 const char* AP_PASS = "sentinel2025";
